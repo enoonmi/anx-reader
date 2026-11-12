@@ -1,0 +1,81 @@
+name: Anx Sync (analyze)
+
+# `dart analyze` for the OnePage progress-merge patch.
+#
+# The patch (lib/service/sync/onepage_progress_merge.dart plus the two
+# insertions in providers/sync.dart) could not be analysed on the development
+# machine: there is no Dart SDK there. A static reference check covers the
+# symbol-level mistakes, but nothing there can catch types, null safety or
+# argument counts. This workflow does.
+#
+# Scoped to the files this fork changes, so a pre-existing warning elsewhere in
+# the upstream tree does not hide a regression here.
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'lib/service/sync/onepage_progress_merge.dart'
+      - 'lib/providers/sync.dart'
+      - 'pubspec.yaml'
+  pull_request:
+    paths:
+      - 'lib/service/sync/onepage_progress_merge.dart'
+      - 'lib/providers/sync.dart'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # The upstream workflows pin a Flutter version in .github/flutter-version.
+      # Reuse it so the analyzer matches what the project actually builds with.
+      - name: Read pinned Flutter version
+        id: flutter-version
+        run: |
+          set -euo pipefail
+          if [ -f .github/flutter-version ]; then
+            version="$(tr -d '[:space:]' < .github/flutter-version)"
+          else
+            version="stable"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Using Flutter ${version}"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      # Generated sources are not committed, so sync.dart's `part 'sync.g.dart'`
+      # has no target until they are produced. Without this the analyzer reports
+      # a missing part file and drowns the real findings.
+      - name: Generate Riverpod and localisation sources
+        run: |
+          set -euo pipefail
+          flutter gen-l10n || true
+          dart run build_runner build --delete-conflicting-outputs
+
+      - name: Analyze the Anx Sync files
+        run: |
+          set -euo pipefail
+          # --fatal-infos would fail on upstream style nits unrelated to this
+          # patch; errors and warnings are what matter here.
+          dart analyze --fatal-warnings \
+            lib/service/sync/onepage_progress_merge.dart \
+            lib/providers/sync.dart
+
+      - name: Check formatting of the new file
+        run: |
+          set -euo pipefail
+          dart format --output=none --set-exit-if-changed \
+            lib/service/sync/onepage_progress_merge.dart
