@@ -12,6 +12,7 @@ import 'package:anx_reader/providers/sync_status.dart';
 import 'package:anx_reader/providers/tb_groups.dart';
 import 'package:anx_reader/service/sync/sync_client_factory.dart';
 import 'package:anx_reader/service/sync/sync_client_base.dart';
+import 'package:anx_reader/service/sync/onepage_progress_merge.dart';
 import 'package:anx_reader/service/database_sync_manager.dart';
 import 'package:anx_reader/dao/database.dart';
 import 'package:anx_reader/utils/get_path/databases_path.dart';
@@ -330,6 +331,22 @@ class Sync extends _$Sync {
       }
 
       await syncFiles();
+
+      // Pull reading progress pushed by a OnePage e-reader. Anx Reader's own
+      // sync cannot carry it: the device has no DOM, so it cannot produce the
+      // EPUB CFI that last_read_position needs, and it must not upload a
+      // database of its own. It writes anx/onepage/progress.json instead and
+      // only the percentage is merged here.
+      try {
+        final onepage = await OnepageProgressMerge.mergeFromClient(client);
+        if (onepage.hasChanges) {
+          AnxLog.info('Applied e-reader progress: $onepage');
+        }
+      } catch (e) {
+        // A missing or malformed device document must never fail the whole
+        // sync - the phone's own data is already synced at this point.
+        AnxLog.warning('Onepage progress merge failed: $e');
+      }
 
       imageCache.clear();
       imageCache.clearLiveImages();
